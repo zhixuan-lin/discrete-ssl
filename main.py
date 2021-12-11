@@ -42,6 +42,24 @@ parser.add_argument('--learning_rate', type=float, default=0.05, help='learning 
 parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
 
+
+parser.add_argument('--beta', type=float, default=0.25, help='beta for commitment loss')
+parser.add_argument('--vq_loss_weight', type=float, default=1.0, help='weight for vq loss')
+parser.add_argument('--num_embeddings', type=int, help='size of the codebook')
+parser.add_argument('--tau', type=float, default=1.0, help='gumbel-softmax temperature')
+parser.add_argument('--reset_prob', type=float, default=0.0, help='resetting label. Prevents collapsing')
+parser.add_argument('--embedding_dim', type=int, help='size of the embedding')
+parser.add_argument('--fix_tau', action='store_true', default=False, help='Whether to fix gumbel-softmax temperature')
+parser.add_argument('--upscale_factor', type=int, default=1, help='Upscale representation')
+parser.add_argument('--tau_schedule_end', type=int, default=800, help='Upscale representation')
+parser.add_argument('--strong_pred', action='store_true', default=False, help='Use strong predictor')
+parser.add_argument('--strong_proj', action='store_true', default=False, help='Use strong predictor')
+parser.add_argument('--use_mseloss', action='store_true', default=False, help='Use mse loss instead of cross-entropy')
+parser.add_argument('--conv_mlp_proj', action='store_true', default=False, help='Use strong predictor')
+parser.add_argument('--raw', action='store_true', default=False, help='Use strong predictor')
+parser.add_argument('--vq', action='store_true', default=False, help='Use strong predictor')
+parser.add_argument('--fix_lr', action='store_true', default=False, help='Whether to fix learning rate')
+parser.add_argument('--proj_block_num', type=int, choices=[0, 1, 2], default=2, help='Use strong predictor')
 args = parser.parse_args()
 
 
@@ -83,7 +101,7 @@ def main():
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
-    criterion = SimSiamLoss(args.loss_version)
+    criterion = SimSiamLoss(args)
 
     if args.gpu is not None:
         torch.cuda.set_device(args.gpu)
@@ -105,12 +123,17 @@ def main():
     validation = KNNValidation(args, model.encoder)
     for epoch in range(start_epoch, args.epochs+1):
 
-        adjust_learning_rate(optimizer, epoch, args)
+        if not args.fix_lr:
+            adjust_learning_rate(optimizer, epoch, args)
+        if not args.fix_tau:
+            adjust_temperature(model, epoch, args)
         print("Training...")
 
         # train for one epoch
-        train_loss = train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, siamese_loss, vq_loss = train(train_loader, model, criterion, optimizer, epoch, args)
         logger.add_scalar('Loss/train', train_loss, epoch)
+        logger.add_scalar('Loss/siamese_loss', siamese_loss, epoch)
+        logger.add_scalar('Loss/vq_loss', vq_loss, epoch)
 
         if epoch % args.eval_freq == 0:
             print("Validating...")
@@ -143,9 +166,11 @@ def main():
 def train(train_loader, model, criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
+    siamese_losses = AverageMeter('Siamese loss', ':.4e')
+    vq_losses = AverageMeter('VQ loss', ':.4e')
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, losses],
+        [batch_time, losses, siamese_losses, vq_losses],
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
@@ -160,7 +185,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # compute output
         outs = model(im_aug1=images[0], im_aug2=images[1])
-        loss = criterion(outs['z1'], outs['z2'], outs['p1'], outs['p2'])
+        loss, loss_log = criterion(outs)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -169,13 +194,15 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # measure elapsed time
         losses.update(loss.item(), images[0].size(0))
+        siamese_losses.update(loss_log['siamese_loss'].item(), images[0].size(0))
+        vq_losses.update(loss_log['vq_loss'].item(), images[0].size(0))
         batch_time.update(time.time() - end)
         end = time.time()
 
         if i % args.print_freq == 0:
             progress.display(i)
 
-    return losses.avg
+    return losses.avg, siamese_losses.avg, vq_losses.avg
 
 
 def adjust_learning_rate(optimizer, epoch, args):
@@ -186,6 +213,17 @@ def adjust_learning_rate(optimizer, epoch, args):
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+def adjust_temperature(model, epoch, args):
+    """Decay the learning rate based on schedule"""
+    # cosine schedule
+    tau = args.tau
+    if epoch > args.tau_schedule_end:
+        tau = 1 / 16
+    else:
+        tau *= 0.5 * (1. + math.cos(math.pi * epoch / args.tau_schedule_end))
+        tau = max(tau, 1 / 16)
+    model.encoder.vq_layer.tau = tau 
 
 
 class AverageMeter(object):

@@ -21,7 +21,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-from simsiam.resnet_cifar import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
+from simsiam.resnet_cifar import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152, ResNet18VQ
 from PIL import Image
 
 
@@ -32,6 +32,7 @@ model_names = sorted(name for name in models.__dict__
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
+parser.add_argument('--exp_dir', type=str, help='path to experiment directory')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -85,15 +86,21 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 parser.add_argument('--pretrained', default='', type=str, help='path to pretrained checkpoint')
 
+parser.add_argument('--num_embeddings', type=int, required=True, help='size of the codebook')
+parser.add_argument('--tau', type=float, default=1/16, help='gumbel-softmax temperature')
+parser.add_argument('--embedding_dim', type=int, required=True, help='size of the embedding')
+parser.add_argument('--vq', action='store_true', required=True help='Use strong predictor')
 
-def get_backbone(backbone_name, num_cls=10):
-    models = {'resnet18': ResNet18(low_dim=num_cls),
-              'resnet34': ResNet34(low_dim=num_cls),
-              'resnet50': ResNet50(low_dim=num_cls),
-              'resnet101': ResNet101(low_dim=num_cls),
-              'resnet152': ResNet152(low_dim=num_cls)}
 
-    return models[backbone_name]
+def get_backbone(args, num_cls=10):
+    return ResNet18VQ(args.num_embeddings, args.tau, num_classes=num_cls, eval_mode=True, embedding_dim=args.embedding_dim, vq=args.vq)
+    # models = {'resnet18': ResNet18(low_dim=num_cls),
+    #           'resnet34': ResNet34(low_dim=num_cls),
+    #           'resnet50': ResNet50(low_dim=num_cls),
+    #           'resnet101': ResNet101(low_dim=num_cls),
+    #           'resnet152': ResNet152(low_dim=num_cls)}
+
+    # return models[backbone_name]
 
 
 best_acc1 = 0
@@ -160,7 +167,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     print("=> creating model '{}'".format(args.arch))
     # model = models.__dict__[args.arch]()
-    model = get_backbone(args.arch, args.num_cls)
+    model = get_backbone(args, args.num_cls)
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():
@@ -319,7 +326,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
-            }, is_best)
+            }, is_best, args.exp_dir)
             if epoch == args.start_epoch:
                 sanity_check(model.state_dict(), args.pretrained)
 
@@ -422,10 +429,12 @@ def validate(val_loader, model, criterion, args):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
+def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
+    os.makedirs(path, exist_ok=True)
+    fullname = os.path.join(path, filename)
+    torch.save(state, fullname)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        shutil.copyfile(fullname, os.path.join(path, 'model_best.pth.tar'))
 
 
 def sanity_check(state_dict, pretrained_weights):

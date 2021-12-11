@@ -41,6 +41,7 @@ class KNNValidation(object):
                                          num_workers=args.num_workers,
                                          pin_memory=True,
                                          drop_last=True)
+        self.args = args
 
     def _topk_retrieval(self):
         """Extract features from validation split and search on train split features."""
@@ -51,15 +52,23 @@ class KNNValidation(object):
         if str(self.device) == 'cuda':
             torch.cuda.empty_cache()
 
-        train_features = torch.zeros([feat_dim, n_data], device=self.device)
+        # train_features = torch.zeros([feat_dim, n_data], device=self.device)
+        if self.args.arch == 'resnet18vq':
+            train_features = torch.zeros([4 * 4 * self.args.upscale_factor ** 2, n_data], device=self.device)
+        elif self.args.arch == 'resnet18vqshallow':
+            train_features = torch.zeros([8 * 8 * self.args.upscale_factor ** 2, n_data], device=self.device)
+        else:
+            raise Exception()
         with torch.no_grad():
             for batch_idx, (inputs, _) in enumerate(self.train_dataloader):
                 inputs = inputs.to(self.device)
                 batch_size = inputs.size(0)
 
                 # forward
-                features = self.model(inputs)
-                features = nn.functional.normalize(features)
+                _, _, _, indices = self.model(inputs)
+                assert indices.ndim == 3
+                features = indices.flatten(start_dim=1)
+                # features = nn.functional.normalize(features)
                 train_features[:, batch_idx * batch_size:batch_idx * batch_size + batch_size] = features.data.t()
 
             train_labels = torch.LongTensor(self.train_dataloader.dataset.targets).cuda()
@@ -70,9 +79,16 @@ class KNNValidation(object):
             for batch_idx, (inputs, targets) in enumerate(self.val_dataloader):
                 targets = targets.cuda(non_blocking=True)
                 batch_size = inputs.size(0)
-                features = self.model(inputs.to(self.device))
+                _, _, _, indices = self.model(inputs.to(self.device))
+                features = indices.flatten(start_dim=1)
+                # features = nn.functional.normalize(features)
 
-                dist = torch.mm(features, train_features)
+                # (D, N) -> (1, D, N)
+                # (B, D) -> (B, D, 1)
+                # hamming distance
+                dist = (train_features[None, :, :] ==  features[:, :, None]).sum(dim=1)
+
+                # dist = torch.mm(features, train_features)
                 yd, yi = dist.topk(self.K, dim=1, largest=True, sorted=True)
                 candidates = train_labels.view(1, -1).expand(batch_size, -1)
                 retrieval = torch.gather(candidates, 1, yi)
