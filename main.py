@@ -1,4 +1,5 @@
 import argparse
+import pathlib
 import time
 import math
 from os import path, makedirs
@@ -47,25 +48,33 @@ parser.add_argument('--beta', type=float, default=0.25, help='beta for commitmen
 parser.add_argument('--vq_loss_weight', type=float, default=1.0, help='weight for vq loss')
 parser.add_argument('--num_embeddings', type=int, help='size of the codebook')
 parser.add_argument('--tau', type=float, default=1.0, help='gumbel-softmax temperature')
-parser.add_argument('--reset_prob', type=float, default=0.0, help='resetting label. Prevents collapsing')
 parser.add_argument('--embedding_dim', type=int, help='size of the embedding')
 parser.add_argument('--fix_tau', action='store_true', default=False, help='Whether to fix gumbel-softmax temperature')
 parser.add_argument('--upscale_factor', type=int, default=1, help='Upscale representation')
 parser.add_argument('--tau_schedule_end', type=int, default=800, help='Upscale representation')
-parser.add_argument('--strong_pred', action='store_true', default=False, help='Use strong predictor')
-parser.add_argument('--strong_proj', action='store_true', default=False, help='Use strong predictor')
-parser.add_argument('--use_mseloss', action='store_true', default=False, help='Use mse loss instead of cross-entropy')
-parser.add_argument('--conv_mlp_proj', action='store_true', default=False, help='Use strong predictor')
-parser.add_argument('--raw', action='store_true', default=False, help='Use strong predictor')
-parser.add_argument('--vq', action='store_true', default=False, help='Use strong predictor')
+parser.add_argument('--discrete_type', type=str, choices=['vq', 'gumbel_softmax'], help='vq or gumbel_softmax')
 parser.add_argument('--fix_lr', action='store_true', default=False, help='Whether to fix learning rate')
-parser.add_argument('--proj_block_num', type=int, choices=[0, 1, 2], default=2, help='Use strong predictor')
+parser.add_argument('--n_proj_conv', type=int, default=2, help='Number of conv layers to use in projector')
+
 args = parser.parse_args()
 
 
 def main():
     if not path.exists(args.exp_dir):
         makedirs(args.exp_dir)
+
+    def attach_run_id(path, exp_name):
+        # From stable-baselines-3
+        max_run_id = 0
+        path = pathlib.Path(path)
+        for dir_path in path.glob(f'{exp_name}_[0-9]*'):
+            prefix, _, suffix = dir_path.name.rpartition('_')
+            if prefix == exp_name and suffix.isdigit() and int(suffix) > max_run_id:
+                max_run_id = int(suffix)
+        return f'{exp_name}_{max_run_id + 1}'
+
+    args.trial = attach_run_id(args.exp_dir, args.trial)
+
 
     trial_dir = path.join(args.exp_dir, args.trial)
     logger = SummaryWriter(trial_dir)

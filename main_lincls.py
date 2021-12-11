@@ -89,11 +89,21 @@ parser.add_argument('--pretrained', default='', type=str, help='path to pretrain
 parser.add_argument('--num_embeddings', type=int, required=True, help='size of the codebook')
 parser.add_argument('--tau', type=float, default=1/16, help='gumbel-softmax temperature')
 parser.add_argument('--embedding_dim', type=int, required=True, help='size of the embedding')
-parser.add_argument('--vq', action='store_true', required=True help='Use strong predictor')
+parser.add_argument('--upscale_factor', type=int, default=1, help='Upscale representation')
+parser.add_argument('--discrete_type', type=str, choices=['vq', 'gumbel_softmax'], help='vq or gumbel_softmax')
+parser.add_argument('--n_proj_conv', type=int, default=2, help='Number of conv layers to use in projector')
 
 
 def get_backbone(args, num_cls=10):
-    return ResNet18VQ(args.num_embeddings, args.tau, num_classes=num_cls, eval_mode=True, embedding_dim=args.embedding_dim, vq=args.vq)
+    return ResNet18VQ(
+        num_classes=10,
+        num_embeddings=args.num_embeddings,
+        embedding_dim=args.embedding_dim,
+        tau=args.tau,
+        upscale_factor=args.upscale_factor,
+        discrete_type=args.discrete_type,
+        eval_mode=True
+    )
     # models = {'resnet18': ResNet18(low_dim=num_cls),
     #           'resnet34': ResNet34(low_dim=num_cls),
     #           'resnet50': ResNet50(low_dim=num_cls),
