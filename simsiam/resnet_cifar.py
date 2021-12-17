@@ -9,6 +9,7 @@ Reference:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 # from lib.normalize import Normalize
 
 from torch.autograd import Variable
@@ -19,6 +20,7 @@ class VQLayer(nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.codebook = nn.Embedding(num_embeddings, embedding_dim)
+        self.codebook.weight.data.uniform_(-math.sqrt(3 / embedding_dim), math.sqrt(3 / embedding_dim))
         self.conv = nn.Conv2d(in_planes, embedding_dim * upscale_factor ** 2, kernel_size=1, stride=1)
         self.upscale_factor = upscale_factor
 
@@ -50,6 +52,7 @@ class GumbelSoftmaxLayer(nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.codebook = nn.Embedding(num_embeddings, embedding_dim)
+        self.codebook.weight.data.uniform_(-math.sqrt(3 / embedding_dim), math.sqrt(3 / embedding_dim))
         self.conv = nn.Conv2d(in_planes, num_embeddings * upscale_factor ** 2, kernel_size=1, stride=1)
         self.tau = tau
         self.upscale_factor = upscale_factor

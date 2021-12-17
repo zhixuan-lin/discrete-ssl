@@ -11,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
 from torchvision import datasets
 from torchvision import transforms
+from torchvision.utils import make_grid
 
 from simsiam.loader import TwoCropsTransform
 from simsiam.model_factory import SimSiam
@@ -55,6 +56,9 @@ parser.add_argument('--tau_schedule_end', type=int, default=800, help='Upscale r
 parser.add_argument('--discrete_type', type=str, choices=['vq', 'gumbel_softmax'], help='vq or gumbel_softmax')
 parser.add_argument('--fix_lr', action='store_true', default=False, help='Whether to fix learning rate')
 parser.add_argument('--n_proj_conv', type=int, default=2, help='Number of conv layers to use in projector')
+parser.add_argument('--strong_proj', action='store_true', default=False, help='Use a strong projector')
+parser.add_argument('--res_proj', action='store_true', default=False, help='Use a residual projector')
+parser.add_argument('--use_recon', action='store_true', default=False, help='Use reconstruction loss')
 
 args = parser.parse_args()
 
@@ -109,6 +113,9 @@ def main():
                           lr=args.learning_rate,
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
+    # optimizer = optim.Adam(model.parameters(),
+                          # lr=args.learning_rate,
+                          # weight_decay=args.weight_decay)
 
     criterion = SimSiamLoss(args)
 
@@ -139,10 +146,15 @@ def main():
         print("Training...")
 
         # train for one epoch
-        train_loss, siamese_loss, vq_loss = train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, siamese_loss, vq_loss, img, recon = train(train_loader, model, criterion, optimizer, epoch, args)
         logger.add_scalar('Loss/train', train_loss, epoch)
         logger.add_scalar('Loss/siamese_loss', siamese_loss, epoch)
         logger.add_scalar('Loss/vq_loss', vq_loss, epoch)
+        if img is not None and recon is not None:
+            n = 6
+            grid = make_grid(torch.cat((img[:n], recon[:n]), dim=0), nrow=n)
+            grid = torch.clamp(grid, min=0.0, max=1.0)
+            logger.add_image('train/recon', grid, global_step=epoch)
 
         if epoch % args.eval_freq == 0:
             print("Validating...")
@@ -186,6 +198,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
 
     end = time.time()
+    img, recon = None, None
     for i, (images, _) in enumerate(train_loader):
 
         if args.gpu is not None:
@@ -199,6 +212,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         optimizer.step()
 
         # measure elapsed time
@@ -207,11 +222,16 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         vq_losses.update(loss_log['vq_loss'].item(), images[0].size(0))
         batch_time.update(time.time() - end)
         end = time.time()
+        if 'img1' in loss_log and 'recon1' in loss_log:
+            img, recon = loss_log['img1'], loss_log['recon1']
 
         if i % args.print_freq == 0:
             progress.display(i)
+    
+    if img is not None and recon is not None:
+        img, recon = img.cpu(), recon.cpu()
 
-    return losses.avg, siamese_losses.avg, vq_losses.avg
+    return losses.avg, siamese_losses.avg, vq_losses.avg, img, recon
 
 
 def adjust_learning_rate(optimizer, epoch, args):

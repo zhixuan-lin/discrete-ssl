@@ -55,8 +55,6 @@ class KNNValidation(object):
         # train_features = torch.zeros([feat_dim, n_data], device=self.device)
         if self.args.arch == 'resnet18vq':
             train_features = torch.zeros([4 * 4 * self.args.upscale_factor ** 2, n_data], device=self.device)
-        elif self.args.arch == 'resnet18vqshallow':
-            train_features = torch.zeros([8 * 8 * self.args.upscale_factor ** 2, n_data], device=self.device)
         else:
             raise Exception()
         with torch.no_grad():
@@ -86,7 +84,19 @@ class KNNValidation(object):
                 # (D, N) -> (1, D, N)
                 # (B, D) -> (B, D, 1)
                 # hamming distance
-                dist = (train_features[None, :, :] ==  features[:, :, None]).sum(dim=1)
+                if self.args.upscale_factor < 4:
+                    dist = (train_features[None, :, :] == features[:, :, None]).sum(dim=1)
+                else:
+                    # Split data to avoid OOM issue
+                    B = features.size(0)
+                    n_chunks = self.args.upscale_factor ** 2 // 4
+                    assert B % (n_chunks) == 0
+                    chunk_size = B // n_chunks
+                    dists = []
+                    for i in range(n_chunks):
+                        batch_slice = slice(i * chunk_size, (i + 1) * chunk_size)
+                        dists.append((train_features[None, :, :] == features[batch_slice, :, None]).sum(dim=1))
+                    dist = torch.cat(dists, dim=0)
 
                 # dist = torch.mm(features, train_features)
                 yd, yi = dist.topk(self.K, dim=1, largest=True, sorted=True)
