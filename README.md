@@ -1,27 +1,23 @@
-# SimSiam
-This is an unofficial Pytorch implementation of the paper [Exploring Simple Siamese Representation Learning](https://arxiv.org/abs/2011.10566).
-<br/>The code has prepared to train on CIFAR10 dataset.
-<br/>This implementation only supports single-gpu training. Multi-gpu or DistributedDataParallel training is not supported currently.
-<br/>KNN classification accuracy and the linear evaluation results on CIFAR10 using this repo are matched with the reported results on "CIFAR Experiments" section in the paper.
+# SimSiam-VQ
 
+Course project for IFT 6268 at UdeM. This repo is a fork of [SimSiam-91.9-top1-acc-on-CIFAR10](https://github.com/Reza-Safdari/SimSiam-91.9-top1-acc-on-CIFAR10).
 
-## Self-Supervised training
-To do unsupervised pre-training of a  CIFAR variant of ResNet-18 model on CIFAR10 in an single-gpu machine, run:<br/><br/>
-`python main.py --data_root [Root directory of dataset where directory cifar-10-batches-py exists]`<br/> `--arch resnet18 --learning_rate 0.06 --epochs 800 --weight_decay 5e-4 --momentum 0.9 --batch_size 512 --gpu 0`
-<br/><br/>This script uses all the default hyper-parameters as described in the paper.
+## Intructions
 
-## Observations
-The figure below shows the training loss plot.<br/>
-<img src="imgs/loss-plot.png">
+Training on CIFAR-10:
 
-KNN classifier can serve as a monitor of the training progress. Left figure plots the validation accuracy of a KNN classifier (k=1) using this repo. Right figure is coresponding plot which was reported in "CIFAR Experiments" section in the paper.<br/>
-|<img src="imgs/top1-acc (ours).png">|<img src="imgs/top1-acc (paper).png">
+```sh
+python main.py --data_root "$DATA_DIR/CIFAR" --exp_dir "$DATA_DIR/log" \
+    --trial 'type=vq-lr=0.02-epochs=800-bs=512-K-256-D=64-upscale=1-tau=1.0-tau_end=800-vq_weight=1.0-beta=0.25-n_conv=2-fix_lr=False-fix_tau=False-init-res_proj-grad_norm' \
+    --arch resnet18vq --learning_rate 0.02 --epochs 800 --weight_decay 5e-4 --momentum 0.9 --batch_size 512 --gpu 0 --eval_freq 5 \
+    --beta 0.25 --num_embeddings 256 --vq_loss_weight 1.0 --embedding_dim 64 --upscale_factor 1 \
+    --tau 1.0 --tau_schedule_end 800 --discrete_type 'vq' \
+    --n_proj_conv 2 --res_proj
+```
 
-## Linear evaluation
-With a pre-trained model, to train a supervised linear classifier on frozen features/weights, run:<br/><br/>
-`python main_lincls.py --arch resnet18 --num_cls 10 --batch_size 256 --lr 30.0 --weight_decay 0.0`<br/>`--pretrained [your checkpoint path] [Root directory of dataset where directory cifar-10-batches-py exists]`
-<br/><br/>
-Linear classification results on CIFAR10 using this repo with one GPU:
-| Model | Pre-train<br/>epochs | Top-1 acc.<br/>(paper) | Top-1 acc.<br/>(ours)| Pre-train<br/>weights |
-| :---: | :---: | :---: | :---:| :---: |
-|ResNet-18| 800 | 91.8 | 91.94 | [download](https://drive.google.com/file/d/17_0uXiTbeUsRhwI0TDgGnj45eLWmXO2c/view?usp=sharing) |
+Linear evaluation:
+
+```sh
+python main_lincls.py "$DATA_DIR/CIFAR" --exp_dir "$DATA_DIR/log/$TRIAL_NAME" --arch resnet18 --num_cls 10 --batch_size 256 --lr 30.0 --weight_decay 0.0 --pretrained "$DATA_DIR/log/$TRIAL_NAME/${TRIAL_NAME}_last.pth" \
+    --num_embeddings 256 --tau 0.0625 --embedding_dim 64 --discrete_type 'vq'
+```
